@@ -1,0 +1,150 @@
+--- a/Source/bg3se/MicrosoftCompatibility/BuildIdentity.h
++++ b/Source/bg3se/MicrosoftCompatibility/BuildIdentity.h
+@@ -3,27 +3,46 @@
+ #include <appmodel.h>
+ #include <cwchar>
+ #include <iterator>
++#include <vector>
++#include <cstdint>
+ 
+ namespace bg3se::microsoft {
+ 
+-// This experimental binary accepts only the locally audited GDK package.
++// Accept the original Microsoft package/build and later versions.
+ // The truncated fixed resource version alone is not an engine build identity.
+-inline bool IsBuild7445165(HMODULE module, void* versionResource)
++inline bool IsMinimumMicrosoftBuild(HMODULE module, void* versionResource)
+ {
+     if (module != GetModuleHandleW(L"bg3.exe")) return false;
+     wchar_t package[PACKAGE_FULL_NAME_MAX_LENGTH + 1]{};
+     UINT32 length = static_cast<UINT32>(std::size(package));
+-    if (GetCurrentPackageFullName(&length, package) != ERROR_SUCCESS
+-        || wcscmp(package, L"LarianStudiosGamesLtd.baldurssgate3_1.8.907.0_x64__551z37b1dechw") != 0) {
++    if (GetCurrentPackageFullName(&length, package) != ERROR_SUCCESS) {
++        return false;
++    }
++    UINT32 identityLength = 0;
++    if (PackageIdFromFullName(package, 0, &identityLength, nullptr) != ERROR_INSUFFICIENT_BUFFER) return false;
++    std::vector<BYTE> identityBuffer(identityLength);
++    if (PackageIdFromFullName(package, 0, &identityLength, identityBuffer.data()) != ERROR_SUCCESS) return false;
++    auto identity = reinterpret_cast<PACKAGE_ID const*>(identityBuffer.data());
++    constexpr uint64_t minimumVersion = (uint64_t{1} << 48) | (uint64_t{8} << 32) | (uint64_t{907} << 16);
++    if (wcscmp(identity->name, L"LarianStudiosGamesLtd.baldurssgate3") != 0
++        || wcscmp(identity->publisherId, L"551z37b1dechw") != 0
++        || identity->processorArchitecture != PROCESSOR_ARCHITECTURE_AMD64
++        || identity->version.Version < minimumVersion) {
+         return false;
+     }
+     wchar_t* specialBuild{ nullptr };
+     UINT chars{ 0 };
+     if (!VerQueryValueW(versionResource, L"\\StringFileInfo\\040904b0\\SpecialBuild",
+         reinterpret_cast<void**>(&specialBuild), &chars)
+-        || specialBuild == nullptr || chars != 8 || wcscmp(specialBuild, L"7445165") != 0) {
++        || specialBuild == nullptr || chars < 2 || chars > 11 || specialBuild[chars - 1] != L'\0') {
+         return false;
+     }
++    uint64_t engineBuild = 0;
++    for (UINT i = 0; i + 1 < chars; ++i) {
++        if (specialBuild[i] < L'0' || specialBuild[i] > L'9') return false;
++        engineBuild = engineBuild * 10 + (specialBuild[i] - L'0');
++    }
++    if (engineBuild < 7445165 || engineBuild > UINT32_MAX) return false;
+     auto dos = reinterpret_cast<IMAGE_DOS_HEADER const*>(module);
+     if (dos->e_magic != IMAGE_DOS_SIGNATURE || dos->e_lfanew <= 0 || dos->e_lfanew > 4096) return false;
+     auto pe = reinterpret_cast<IMAGE_NT_HEADERS64 const*>(reinterpret_cast<char const*>(module) + dos->e_lfanew);
+--- a/Source/bg3se/BG3Extender/GameHooks/DataLibraries.h
++++ b/Source/bg3se/BG3Extender/GameHooks/DataLibraries.h
+@@ -14,13 +14,12 @@
+     struct GameVersionInfo
+     {
+         uint16_t Major{ 0 }, Minor{ 0 }, Revision{ 0 }, Build{ 0 };
+-        bool MicrosoftBuild7445165{ false };
++        bool MicrosoftMinimumBuild{ false };
+ 
+         inline bool IsSupported() const
+         {
+ #if defined(BG3SE_MICROSOFT_7445165)
+-            return MicrosoftBuild7445165 && Major == 4 && Minor == 1
+-                && Revision == 1 && Build == 39597;
++            return MicrosoftMinimumBuild;
+ #else
+             // We need v4.69 or later for game
+             return (Major == 4 && ((Minor == 69 && Revision >= 95) || (Minor > 69)));
+--- a/Source/bg3se/BG3Extender/GameHooks/DataLibraries.cpp
++++ b/Source/bg3se/BG3Extender/GameHooks/DataLibraries.cpp
+@@ -299,7 +299,7 @@
+         version.Revision = HIWORD(fixedFileInfo->dwFileVersionLS);
+         version.Build = LOWORD(fixedFileInfo->dwFileVersionLS);
+ #if defined(BG3SE_MICROSOFT_7445165)
+-        version.MicrosoftBuild7445165 = microsoft::IsBuild7445165(hGameModule, pResCopy);
++        version.MicrosoftMinimumBuild = microsoft::IsMinimumMicrosoftBuild(hGameModule, pResCopy);
+ #endif
+ 
+         LocalFree(pResCopy);
+--- a/Source/bg3se/BG3Extender/Extender/ScriptExtender.cpp
++++ b/Source/bg3se/BG3Extender/Extender/ScriptExtender.cpp
+@@ -76,13 +76,13 @@
+         if (gameVersion_.IsSupported()) {
+             INFO("Game version v%d.%d.%d.%d OK", gameVersion_.Major, gameVersion_.Minor, gameVersion_.Revision, gameVersion_.Build);
+ #if defined(BG3SE_MICROSOFT_7445165)
+-            INFO("Experimental Microsoft port: package 1.8.907.0 / SpecialBuild 7445165 identity verified");
++            INFO("Experimental Microsoft port: package >= 1.8.907.0 / SpecialBuild >= 7445165 identity verified");
+ #endif
+         } else {
+             ERR("Game version v%d.%d.%d.%d is not supported, please upgrade!", gameVersion_.Major, gameVersion_.Minor, gameVersion_.Revision, gameVersion_.Build);
+             // Hard exit below a certain version as the EoCClient error display UI won't work anymore
+ #if defined(BG3SE_MICROSOFT_7445165)
+-            Fail("This experimental Script Extender requires the audited Microsoft package 1.8.907.0 / build 7445165.");
++            Fail("This experimental Script Extender requires Microsoft package 1.8.907.0 or newer / build 7445165 or newer.");
+ #else
+             Fail("Script Extender doesn't support game versions below v4.68, please upgrade!");
+ #endif
+--- a/Source/BG3ModManager/src/GUI/Util/XboxPcPaths.cs
++++ b/Source/BG3ModManager/src/GUI/Util/XboxPcPaths.cs
+@@ -32,8 +32,9 @@
+         var identity = xml.SelectSingleNode("/Game/Identity");
+         if (identity?.Attributes?["Name"]?.Value != "LarianStudiosGamesLtd.baldurssgate3"
+             || identity.Attributes?["Publisher"]?.Value != "CN=1EE724DE-ED65-4143-99F1-FAC7C9BE0B9F"
+-            || identity.Attributes?["Version"]?.Value != PackageVersion)
+-            throw new InvalidOperationException("This Xbox PC release supports Microsoft package 1.8.907.0 only. A different build needs a new compatibility release.");
++            || !Version.TryParse(identity.Attributes?["Version"]?.Value, out var packageVersion)
++            || packageVersion.Revision < 0 || packageVersion < new Version(PackageVersion))
++            throw new InvalidOperationException("This Xbox PC release requires Microsoft package 1.8.907.0 or newer.");
+     }
+ 
+     public static string FindGame(string configuredExe)
+--- a/Source/BG3ModManager/src/GUI/Util/XboxPcSetup.cs
++++ b/Source/BG3ModManager/src/GUI/Util/XboxPcSetup.cs
+@@ -18,7 +18,7 @@
+     private static readonly Dictionary<string, string> PayloadHashes = new(StringComparer.OrdinalIgnoreCase)
+     {
+         ["DWrite.dll"] = "8F3C0782461CC280CAB4ADFC270979549211F6CAC91AD851BAA2B2716118ECB0",
+-        ["BG3ScriptExtender.dll"] = "846057960E4D9E7544E87E15D58948BBC4F7E2BA08153007F7D2C0F1C2DFC85D",
++        ["BG3ScriptExtender.dll"] = "54D20AF3639CD18F7EED3CD34E3E1D0DFF47A0291DC664686F589A59486B35FE",
+         ["BG3MCM.pak"] = "047EF751C333BCAB1180779350ED39EEC09FCE276D65745B9D174723C72E027C"
+     };
+     public sealed class Entry
+--- a/Source/BG3ModManager/src/GUI/ViewModels/MainWindowViewModel.XboxPc.cs
++++ b/Source/BG3ModManager/src/GUI/ViewModels/MainWindowViewModel.XboxPc.cs
+@@ -51,7 +51,7 @@
+         var includeMcm = new CheckBox { Content = "Also install and enable MCM (in-game mod settings)", IsChecked = true, Foreground = Brushes.White, Margin = new Thickness(0, 0, 0, 16) };
+         layout.Children.Add(includeMcm);
+         layout.Children.Add(new TextBlock { Text = "Game: " + Path.GetDirectoryName(Settings.GameExecutablePath) + "\nProfile: " + (SelectedProfile?.Name ?? "Choose a profile in the main window"), TextWrapping = TextWrapping.Wrap, Foreground = Brushes.LightGray, Margin = new Thickness(0, 0, 0, 16) });
+-        layout.Children.Add(new TextBlock { Text = "Experimental • Microsoft package 1.8.907.0 only", Foreground = Brushes.LightGray, Margin = new Thickness(0, 0, 0, 16) });
++        layout.Children.Add(new TextBlock { Text = "Experimental • Microsoft package 1.8.907.0 or newer", Foreground = Brushes.LightGray, Margin = new Thickness(0, 0, 0, 16) });
+         var status = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 16) };
+         layout.Children.Add(status);
+         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
+--- a/Tests/Program.cs
++++ b/Tests/Program.cs
+@@ -31,8 +31,8 @@
+ Reject(() => XboxPcPaths.ValidateProfile(Path.Combine(root, "Outside"), mods), "Outside profile rejected");
+ var config = Path.Combine(game, "MicrosoftGame.config");
+ var configText = File.ReadAllText(config);
+-File.WriteAllText(config, configText.Replace("1.8.907.0", "1.8.908.0"));
+-Reject(() => XboxPcSetup.Install(root, game, mods, profile, mcm, true), "Other game versions rejected before installation");
++File.WriteAllText(config, configText.Replace("1.8.907.0", "1.8.906.0"));
++Reject(() => XboxPcSetup.Install(root, game, mods, profile, mcm, true), "Older game versions rejected before installation");
+ File.WriteAllText(config, configText);
+ XboxPcSetup.Install(root, game, mods, profile, mcm, true);
+ Check(File.Exists(mcm) && File.Exists(Path.Combine(game, "BG3ScriptExtender.dll")), "Native runtime and MCM installed");

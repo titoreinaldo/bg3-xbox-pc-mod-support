@@ -1,0 +1,17 @@
+{
+  "packageVersion": "0.2.3",
+  "baseSourceVersion": "0.2.2",
+  "minimumMicrosoftPackage": "1.8.907.0",
+  "minimumEngineBuild": 7445165,
+  "validation": {
+    "build": "succeeded",
+    "launch": "maintainer confirmed on 2026-10-03",
+    "launchMicrosoftPackage": "1.8.910.0",
+    "additionalAutomatedTestsRun": false,
+    "additionalGameplayTestsRun": false
+  },
+  "binaries": {
+    "BG3ScriptExtender.dll": "54d20af3639cd18f7eed3cd34e3e1d0dff47a0291dc664686f589a59486b35fe",
+    "BG3ModManager.dll": "41efc92cdee0af786548643b07b500b83f3feb6067c0d417fc7fb55137a70f0f"
+  }
+}

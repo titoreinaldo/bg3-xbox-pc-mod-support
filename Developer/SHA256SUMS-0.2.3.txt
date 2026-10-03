@@ -1,0 +1,4 @@
+38771703823dd37e28935a01a6ef70eeb0d6ae7c97aa7fd536197b6219c1ead7  BG3-Xbox-Mod-Manager-0.2.3.zip
+ea70207d9941fab28d88aaa0613387ee1a38e2f685fd1c76ebb81f292b3decdf  BG3-Xbox-PC-Corresponding-Source-0.2.3.zip
+54d20af3639cd18f7eed3cd34e3e1d0dff47a0291dc664686f589a59486b35fe  App/Payload/BG3ScriptExtender.dll
+41efc92cdee0af786548643b07b500b83f3feb6067c0d417fc7fb55137a70f0f  App/BG3ModManager.dll
